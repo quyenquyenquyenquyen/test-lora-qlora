@@ -6,12 +6,12 @@ mkdir -p ./model/code2review_t5_data_task2/cache/
 mkdir -p ./model/code2review_t5_data_task2/outputs/
 mkdir -p ./model/code2review_t5_data_task2/summary/
 mkdir -p ./model/code2review_t5_data_task2/outputs/results
+mkdir -p checkpoint  # Sửa lại đúng tên thư mục
 
-CHECKPOINT_DIR="./model/code2review_t5_data_task2/outputs/checkpoints"
-mkdir -p "$CHECKPOINT_DIR"
+CHECKPOINT_DIR="checkpoint"  # Sửa lại đúng tên thư mục
 
 # Tìm checkpoint mới nhất
-latest_checkpoint=$(ls -t $CHECKPOINT_DIR | head -n 1)
+latest_checkpoint=$(ls -t $CHECKPOINT_DIR 2>/dev/null | head -n 1)
 
 if [ -n "$latest_checkpoint" ]; then
     echo "🔄 Đang tải checkpoint từ $latest_checkpoint"
@@ -41,11 +41,11 @@ while true; do
     sleep 3600  # Chờ 1 giờ
     CHECKPOINT_NAME="checkpoint_latest"
 
-    echo "💾 Lưu checkpoint: $CHECKPOINT_NAME"
-    
-    # Xóa checkpoint cũ nếu tồn tại
-    rm -rf "$CHECKPOINT_DIR/$CHECKPOINT_NAME"
-    
-    # Lưu checkpoint mới
-    cp -r ./model/code2review_t5_data_task2/outputs/ "$CHECKPOINT_DIR/$CHECKPOINT_NAME"
+    if [ -d "./model/code2review_t5_data_task2/outputs/" ]; then
+        echo "💾 Lưu checkpoint: $CHECKPOINT_NAME"
+        rm -rf "$CHECKPOINT_DIR/$CHECKPOINT_NAME"
+        cp -r ./model/code2review_t5_data_task2/outputs/ "$CHECKPOINT_DIR/$CHECKPOINT_NAME"
+    else
+        echo "⚠️ Không tìm thấy thư mục outputs, bỏ qua checkpoint!"
+    fi
 done &
