@@ -6,21 +6,18 @@ mkdir -p ./model/code2review_t5_data_task2/cache/
 mkdir -p ./model/code2review_t5_data_task2/outputs/
 mkdir -p ./model/code2review_t5_data_task2/summary/
 mkdir -p ./model/code2review_t5_data_task2/outputs/results
-mkdir -p checkpoint  # Sửa lại đúng tên thư mục
+mkdir -p checkpoint
 
-CHECKPOINT_DIR="checkpoint"  # Sửa lại đúng tên thư mục
-
-# Tìm checkpoint mới nhất
-latest_checkpoint=$(ls -t $CHECKPOINT_DIR 2>/dev/null | head -n 1)
+# Xác định checkpoint mới nhất
+latest_checkpoint=$(ls -t checkpoint | head -n 1)
+CHECKPOINT_PATH="/kaggle/checkpoint/"
 
 if [ -n "$latest_checkpoint" ]; then
-    echo "🔄 Đang tải checkpoint từ $latest_checkpoint"
-    CHECKPOINT_PATH="--resume_from_checkpoint $CHECKPOINT_DIR/$latest_checkpoint"
+    echo "🔄 Tiếp tục từ checkpoint: $latest_checkpoint"
+    CHECKPOINT_PATH="--resume_from_checkpoint checkpoint/$latest_checkpoint"
 else
-    echo "🚀 Không tìm thấy checkpoint, bắt đầu từ đầu"
-    CHECKPOINT_PATH=""
+    echo "🚀 Bắt đầu từ đầu (không có checkpoint trước đó)"
 fi
-
 # Chạy training
 CUDA_VISIBLE_DEVICES=0 python run_gen.py --do_train --do_eval --do_eval_bleu  \
     --task refine --sub_task small --model_type codet5 --data_num -1 \
@@ -39,13 +36,11 @@ CUDA_VISIBLE_DEVICES=0 python run_gen.py --do_train --do_eval --do_eval_bleu  \
 # Tự động lưu checkpoint mỗi 1 giờ
 while true; do
     sleep 3600  # Chờ 1 giờ
-    CHECKPOINT_NAME="checkpoint_latest"
+    TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+    CHECKPOINT_NAME="checkpoint_$TIMESTAMP"
 
-    if [ -d "./model/code2review_t5_data_task2/outputs/" ]; then
-        echo "💾 Lưu checkpoint: $CHECKPOINT_NAME"
-        rm -rf "$CHECKPOINT_DIR/$CHECKPOINT_NAME"
-        cp -r ./model/code2review_t5_data_task2/outputs/ "$CHECKPOINT_DIR/$CHECKPOINT_NAME"
-    else
-        echo "⚠️ Không tìm thấy thư mục outputs, bỏ qua checkpoint!"
-    fi
+    echo "💾 Lưu checkpoint: $CHECKPOINT_NAME"
+
+    rm -rf checkpoint/*
+    cp -r ./model/code2review_t5_data_task2/outputs/ "checkpoint/$CHECKPOINT_NAME"
 done &
