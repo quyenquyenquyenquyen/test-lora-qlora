@@ -46,17 +46,17 @@ def build_or_load_gen_model(args):
         logger.info("Applied QLoRA: trainable params: %s", model.print_trainable_parameters())
   else:
       
-        if args.model_type == 'roberta':
+      if args.model_type == 'roberta':
             encoder = model_class.from_pretrained(args.model_name_or_path, config=config)
             decoder_layer = nn.TransformerDecoderLayer(d_model=config.hidden_size, nhead=config.num_attention_heads)
             decoder = nn.TransformerDecoder(decoder_layer, num_layers=6)
             model = Seq2Seq(encoder=encoder, decoder=decoder, config=config,
                             beam_size=args.beam_size, max_length=args.max_target_length,
                             sos_id=tokenizer.cls_token_id, eos_id=tokenizer.sep_token_id)
-        else:
+      else:
             model = model_class.from_pretrained(args.model_name_or_path)
     
-        logger.info("Finish loading model [%s] from %s", get_model_size(model), args.model_name_or_path)
+            logger.info("Finish loading model [%s] from %s", get_model_size(model), args.model_name_or_path)
 
   if args.load_model_path is not None:
         logger.info("Reload model from {}".format(args.load_model_path))
@@ -64,7 +64,7 @@ def build_or_load_gen_model(args):
   else:
         logger.info("Do not Load Models.")
 
-  return config, model, tokenizer
+        return config, model, tokenizer
 
 
 class RobertaClassificationHead(nn.Module):
