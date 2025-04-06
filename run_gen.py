@@ -184,13 +184,6 @@ def eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, split_tag,
 def main():
     parser = argparse.ArgumentParser()
     args = add_args(parser)
-    parser.add_argument("--use_qlora", action="store_true", help="Use QLoRA for training")
-    logger.info(args)
-    t0 = time.time()
-
-    set_dist(args)
-    set_seed(args)
-    config, model, tokenizer = build_or_load_gen_model(args)
     logger.info(args)
     t0 = time.time()
 
