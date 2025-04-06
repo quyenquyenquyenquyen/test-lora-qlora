@@ -431,4 +431,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main():
+  parser.add_argument("--use_qlora", action="store_true", help="Use QLoRA for training")
+args = parser.parse_args()
