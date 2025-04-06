@@ -20,7 +20,7 @@
 mkdir ./model/code2review_t5_data_task2/outputs/results_beam5_hyp5/
 CUDA_VISIBLE_DEVICES=0 python  run_gen2.py  --do_test --do_eval_bleu  \
         --task refine --sub_task small --model_type codet5 --data_num -1    \
-        --num_train_epochs  10  \
+        --num_train_epochs  5  \
         --warmup_steps 500 \
         --learning_rate 5e-5 --patience 3 --beam_size 5\
         --gradient_accumulation_steps 1 \
