@@ -7,7 +7,7 @@
 
 CUDA_VISIBLE_DEVICES=0 python  run_gen.py  --do_train --do_eval --do_eval_bleu  \
         --task refine --sub_task small --model_type codet5 --data_num -1    \
-        --num_train_epochs  4  \
+        --num_train_epochs  3  \
         --warmup_steps 500 \
         --learning_rate 5e-5 --patience 3 --beam_size 5\
         --gradient_accumulation_steps 1 \
