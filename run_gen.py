@@ -27,6 +27,7 @@ import numpy as np
 from tqdm import tqdm
 import multiprocessing
 import time
+import glob
 
 import torch
 from torch import nn
@@ -48,12 +49,50 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message
                     level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Hàm lưu checkpoint
+def save_checkpoint(model, optimizer, scheduler, epoch, loss, args):
+    checkpoint_dir = os.path.join(args.output_dir, 'checkpoints')
+    if not os.path.exists(checkpoint_dir):
+        os.makedirs(checkpoint_dir)
+    
+    checkpoint = {
+        'epoch': epoch,
+        'model_state_dict': model.module.state_dict() if hasattr(model, 'module') else model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'scheduler_state_dict': scheduler.state_dict(),
+        'loss': loss
+    }
+    
+    filepath = os.path.join(checkpoint_dir, f'checkpoint_epoch_{epoch}.pt')
+    torch.save(checkpoint, filepath)
+    logger.info(f'Saved checkpoint at epoch {epoch} to {filepath}')
+
+# Hàm load checkpoint gần nhất
+def load_latest_checkpoint(model, optimizer, scheduler, args):
+    checkpoint_dir = os.path.join(args.output_dir, 'checkpoints')
+    if not os.path.exists(checkpoint_dir):
+        return model, optimizer, scheduler, args.start_epoch, None
+    
+    checkpoint_files = glob.glob(os.path.join(checkpoint_dir, 'checkpoint_epoch_*.pt'))
+    if not checkpoint_files:
+        return model, optimizer, scheduler, args.start_epoch, None
+    
+    latest_checkpoint = max(checkpoint_files, key=os.path.getctime)
+    checkpoint = torch.load(latest_checkpoint)
+    
+    model.load_state_dict(checkpoint['model_state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+    start_epoch = checkpoint['epoch']
+    loss = checkpoint['loss']
+    
+    logger.info(f"Loaded checkpoint from {latest_checkpoint} at epoch {start_epoch}")
+    return model, optimizer, scheduler, start_epoch, loss
 
 def eval_ppl_epoch(args, eval_data, eval_examples, model, tokenizer):
     eval_sampler = SequentialSampler(eval_data)
     eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size,
                                  num_workers=4, pin_memory=True)
-    # Start evaluating model
     logger.info("  " + "***** Running ppl evaluation *****")
     logger.info("  Num examples = %d", len(eval_examples))
     logger.info("  Batch size = %d", args.eval_batch_size)
@@ -74,19 +113,15 @@ def eval_ppl_epoch(args, eval_data, eval_examples, model, tokenizer):
                 outputs = model(input_ids=source_ids, attention_mask=source_mask,
                                 labels=target_ids, decoder_attention_mask=target_mask)
                 loss = outputs.loss
-        #print('loss',loss)
         
         if args.n_gpu > 1:
-            loss = loss.mean()  # mean() to average on multi-gpu.
-        #if args.gradient_accumulation_steps > 1:
-            #loss = loss / args.gradient_accumulation_steps
+            loss = loss.mean()
         eval_loss += loss.item()
-
         batch_num += 1
+    
     eval_loss = eval_loss / batch_num
     eval_ppl = round(np.exp(eval_loss), 5)
     return eval_ppl
-
 
 def eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, split_tag, criteria):
     logger.info("  ***** Running bleu evaluation on {} data*****".format(split_tag))
@@ -108,7 +143,6 @@ def eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, split_tag,
         with torch.no_grad():
             if args.model_type == 'roberta':
                 preds = model(source_ids=source_ids, source_mask=source_mask)
-
                 top_preds = [pred[0].cpu().numpy() for pred in preds]
             else:
                 preds = model.generate(source_ids,
@@ -117,18 +151,10 @@ def eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, split_tag,
                                        num_beams=args.beam_size,
                                        early_stopping=args.task == 'summarize',
                                        max_length=args.max_target_length)
-                                       #num_return_sequences=args.beam_size)
-                #print('predictions:',len(list(preds.cpu().numpy())))
                 top_preds = list(preds.cpu().numpy())
             pred_ids.extend(top_preds)
 
     pred_nls = [tokenizer.decode(id, skip_special_tokens=True, clean_up_tokenization_spaces=False) for id in pred_ids]
-    '''
-    print('predictions:', len(pred_nls))
-    print(int(len(pred_nls)/args.beam_size))
-    pred_nls_new = ['\t'.join(pred_nls[i*args.beam_size: (i+1)*args.beam_size]) for i in range(int(len(pred_nls)/args.beam_size)) ]
-    print('predictions:', len(pred_nls_new))
-    '''
 
     output_fn = os.path.join(args.res_dir, "test_{}.output".format(criteria))
     gold_fn = os.path.join(args.res_dir, "test_{}.gold".format(criteria))
@@ -152,7 +178,6 @@ def eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, split_tag,
             for pred_nl, gold in zip(pred_nls, eval_examples):
                 dev_accs.append(pred_nl.strip() == gold.target.strip())
                 if args.task in ['summarize']:
-                    # for smooth-bleu4 evaluation
                     predictions.append(str(gold.idx) + '\t' + pred_nl)
                     f.write(str(gold.idx) + '\t' + pred_nl.strip() + '\n')
                     f1.write(str(gold.idx) + '\t' + gold.target.strip() + '\n')
@@ -167,8 +192,6 @@ def eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, split_tag,
             bleu = round(smooth_bleu.bleuFromMaps(goldMap, predictionMap)[0], 2)
         else:
             bleu = round(_bleu(gold_fn, output_fn), 2)
-            #if args.task in ['concode', 'translate', 'refine']:
-                #codebleu = calc_code_bleu.get_codebleu(gold_fn, output_fn, args.lang)
 
         result = {'em': np.mean(dev_accs) * 100, 'bleu': bleu}
         if args.task == 'concode':
@@ -179,7 +202,6 @@ def eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, split_tag,
         logger.info("  %s = %s", key, str(round(result[key], 4)))
 
     return result
-
 
 def main():
     parser = argparse.ArgumentParser()
@@ -192,7 +214,6 @@ def main():
     config, model, tokenizer = build_or_load_gen_model(args)
     model.to(args.device)
     if args.n_gpu > 1:
-        # for DataParallel
         model = torch.nn.DataParallel(model)
     pool = multiprocessing.Pool(args.cpu_cont)
     args.train_filename, args.dev_filename, args.test_filename = get_filenames(args.data_dir, args.task, args.sub_task)
@@ -203,13 +224,11 @@ def main():
             summary_fn = '{}/{}'.format(args.summary_dir, '/'.join(args.output_dir.split('/')[1:]))
             tb_writer = SummaryWriter(summary_fn)
 
-        # Prepare training data loader
         train_examples, train_data = load_and_cache_gen_data(args, args.train_filename, pool, tokenizer, 'train')
         train_sampler = RandomSampler(train_data) if args.local_rank == -1 else DistributedSampler(train_data)
         train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=args.train_batch_size,
                                       num_workers=4, pin_memory=True)
 
-        # Prepare optimizer and schedule (linear warmup and decay)
         no_decay = ['bias', 'LayerNorm.weight']
         optimizer_grouped_parameters = [
             {'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
@@ -221,25 +240,25 @@ def main():
         scheduler = get_linear_schedule_with_warmup(optimizer,
                                                     num_warmup_steps=args.warmup_steps,
                                                     num_training_steps=num_train_optimization_steps)
-        print("args.warmup_steps",args.warmup_steps)
-        print("num_train_optimization_steps:", num_train_optimization_steps)
-        # Start training
+
+        # Load checkpoint gần nhất nếu có
+        model, optimizer, scheduler, start_epoch, _ = load_latest_checkpoint(model, optimizer, scheduler, args)
+
         train_example_num = len(train_data)
         logger.info("***** Running training *****")
         logger.info("  Num examples = %d", train_example_num)
         logger.info("  Batch size = %d", args.train_batch_size)
         logger.info("  Batch num = %d", math.ceil(train_example_num / args.train_batch_size))
         logger.info("  Num epoch = %d", args.num_train_epochs)
-        print( args.model_type)
 
         dev_dataset = {}
         global_step, best_bleu_em, best_ppl = 0, -1, 1e6
         not_loss_dec_cnt, not_bleu_em_inc_cnt = 0, 0 if args.do_eval_bleu else 1e6
         
         ce_cir = nn.CrossEntropyLoss(ignore_index=-100)
-        kld = nn.KLDivLoss(reduction='none')           
+        kld = nn.KLDivLoss(reduction='none')
 
-        for cur_epoch in range(args.start_epoch, int(args.num_train_epochs)):
+        for cur_epoch in range(start_epoch, int(args.num_train_epochs)):
             bar = tqdm(train_dataloader, total=len(train_dataloader), desc="Training")
             nb_tr_examples, nb_tr_steps, tr_loss = 0, 0, 0
             model.train()
@@ -255,31 +274,10 @@ def main():
                 else:
                     outputs = model(input_ids=source_ids, attention_mask=source_mask,
                                     labels=target_ids, decoder_attention_mask=target_mask)
-                    ## CE loss
                     loss = outputs.loss
-                    #print(outputs.keys())
-                    #print(outputs.logits.size())
-                    """
-                    ## R-Drop
-                    outputs2 = model(input_ids=source_ids, attention_mask=source_mask,labels=target_ids, decoder_attention_mask=target_mask)
-                    ce_loss1 = ce_cir(outputs.logits.view(-1, outputs.logits.size(-1)), target_ids.view(-1))
-                    ce_loss2 = ce_cir(outputs2.logits.view(-1, outputs2.logits.size(-1)), target_ids.view(-1))
-                    #print(loss)
-                    #print(ce_loss1)
-                    #print(ce_loss2)
-
-                    kl_loss1 = kld(F.log_softmax(outputs.logits, dim=-1), F.softmax(outputs2.logits, dim=-1)).sum(-1)
-                    kl_loss2 = kld(F.log_softmax(outputs2.logits, dim=-1), F.softmax(outputs.logits, dim=-1)).sum(-1)
-                    #print(kl_loss1)
-                    #print(kl_loss2)
-                    ce_loss = (ce_loss1 + ce_loss2) / 2
-                    kl_loss = (kl_loss1 + kl_loss2) / 2
-                    loss = ce_loss + 1 * kl_loss
-                    """
                 
-                #print( args.model_type)
                 if args.n_gpu > 1:
-                    loss = loss.mean()  # mean() to average on multi-gpu.
+                    loss = loss.mean()
                 if args.gradient_accumulation_steps > 1:
                     loss = loss / args.gradient_accumulation_steps
                 tr_loss += loss.item()
@@ -289,7 +287,6 @@ def main():
                 loss.backward()
 
                 if nb_tr_steps % args.gradient_accumulation_steps == 0:
-                    # Update parameters
                     optimizer.step()
                     optimizer.zero_grad()
                     scheduler.step()
@@ -297,8 +294,10 @@ def main():
                     train_loss = round(tr_loss * args.gradient_accumulation_steps / (nb_tr_steps + 1), 4)
                     bar.set_description("[{}] Train loss {}".format(cur_epoch, round(train_loss, 3)))
 
+            # Lưu checkpoint sau mỗi epoch
+            save_checkpoint(model, optimizer, scheduler, cur_epoch + 1, tr_loss / nb_tr_steps, args)
+
             if args.do_eval:
-                # Eval model with dev dataset
                 if 'dev_loss' in dev_dataset:
                     eval_examples, eval_data = dev_dataset['dev_loss']
                 else:
@@ -313,7 +312,6 @@ def main():
                 if args.data_num == -1:
                     tb_writer.add_scalar('dev_ppl', eval_ppl, cur_epoch)
 
-                # save last checkpoint
                 if args.save_last_checkpoints:
                     last_output_dir = os.path.join(args.output_dir, 'checkpoint-last')
                     if not os.path.exists(last_output_dir):
@@ -322,7 +320,7 @@ def main():
                     output_model_file = os.path.join(last_output_dir, "pytorch_model.bin")
                     torch.save(model_to_save.state_dict(), output_model_file)
                     logger.info("Save the last model into %s", output_model_file)
-                print("eval_ppl:",eval_ppl)
+
                 if eval_ppl < best_ppl:
                     not_loss_dec_cnt = 0
                     logger.info("  Best ppl:%s", eval_ppl)
@@ -330,7 +328,6 @@ def main():
                     fa.write("[%d] Best ppl changed into %.4f\n" % (cur_epoch, eval_ppl))
                     best_ppl = eval_ppl
                     
-                    # Save best checkpoint for best ppl
                     output_dir = os.path.join(args.output_dir, 'checkpoint-best-ppl')
                     if not os.path.exists(output_dir):
                         os.makedirs(output_dir)
@@ -348,12 +345,13 @@ def main():
                         logger.info(early_stop_str)
                         fa.write(early_stop_str)
                         break
+                
                 logger.info("***** CUDA.empty_cache() *****")
                 torch.cuda.empty_cache()
+                
                 if args.do_eval_bleu:
                     eval_examples, eval_data = load_and_cache_gen_data(args, args.dev_filename, pool, tokenizer, 'dev',
                                                                        only_src=True, is_sample=True)
-
                     result = eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, 'dev', 'e%d' % cur_epoch)
                     dev_bleu, dev_em = result['bleu'], result['em']
                     if args.task in ['summarize']:
@@ -364,11 +362,7 @@ def main():
                         dev_bleu_em = dev_bleu + dev_em
                     if args.data_num == -1:
                         tb_writer.add_scalar('dev_bleu_em', dev_bleu_em, cur_epoch)
-                        # tb_writer.add_scalar('dev_em', dev_em, cur_epoch)
-                    print("dev_bleu:",dev_bleu)
-                    print("dev_em:", dev_em)
-                    print("dev_bleu_em:",dev_bleu_em)
-                    print("best_bleu_em:", best_bleu_em)
+                    
                     if dev_bleu_em > best_bleu_em:
                         not_bleu_em_inc_cnt = 0
                         logger.info("  [%d] Best bleu+em: %.2f (bleu: %.2f, em: %.2f)",
@@ -377,7 +371,6 @@ def main():
                         best_bleu_em = dev_bleu_em
                         fa.write("[%d] Best bleu+em changed into %.2f (bleu: %.2f, em: %.2f)\n" % (
                             cur_epoch, best_bleu_em, dev_bleu, dev_em))
-                        # Save best checkpoint for best bleu
                         output_dir = os.path.join(args.output_dir, 'checkpoint-best-bleu')
                         if not os.path.exists(output_dir):
                             os.makedirs(output_dir)
@@ -398,6 +391,7 @@ def main():
                             logger.info(stop_early_str)
                             fa.write(stop_early_str)
                             break
+            
             logger.info("***** CUDA.empty_cache() *****")
             torch.cuda.empty_cache()
 
@@ -425,10 +419,10 @@ def main():
                 with open(args.res_fn, 'a+') as f:
                     f.write('[Time: {}] {}\n'.format(get_elapse_time(t0), file))
                     f.write(result_str)
+    
     logger.info("Finish and take {}".format(get_elapse_time(t0)))
     fa.write("Finish and take {}".format(get_elapse_time(t0)))
     fa.close()
-
 
 if __name__ == "__main__":
     main()
