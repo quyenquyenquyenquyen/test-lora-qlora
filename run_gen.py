@@ -28,7 +28,6 @@ from tqdm import tqdm
 import multiprocessing
 import time
 import glob
-from torch.nn import CTCLoss
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -241,9 +240,6 @@ def main():
                                                     num_warmup_steps=args.warmup_steps,
                                                     num_training_steps=num_train_optimization_steps)
 
-        # Khởi tạo CTC Loss
-        ctc_loss = CTCLoss(blank=tokenizer.pad_token_id, reduction='mean')
-
         # Load checkpoint gần nhất nếu có
         model, optimizer, scheduler, start_epoch, _ = load_latest_checkpoint(model, optimizer, scheduler, args)
 
@@ -271,31 +267,14 @@ def main():
                 source_mask = source_ids.ne(tokenizer.pad_token_id)
                 target_mask = target_ids.ne(tokenizer.pad_token_id)
 
-                # Forward pass với CTC Loss
                 if args.model_type == 'roberta':
                     loss, _, _ = model(source_ids=source_ids, source_mask=source_mask,
-                                      target_ids=target_ids, target_mask=target_mask)
+                                       target_ids=target_ids, target_mask=target_mask)
                 else:
-                    # Lấy logits từ mô hình
                     outputs = model(input_ids=source_ids, attention_mask=source_mask,
-                                  decoder_attention_mask=target_mask)
-                    logits = outputs.logits  # Shape: [batch_size, seq_len, vocab_size]
-
-                    # Chuẩn bị dữ liệu cho CTC Loss
-                    input_lengths = source_mask.sum(dim=1)  # Độ dài thực của chuỗi nguồn
-                    target_lengths = target_mask.sum(dim=1)  # Độ dài thực của chuỗi đích
-                    log_probs = F.log_softmax(logits, dim=-1).transpose(0, 1)  # [seq_len, batch_size, vocab_size]
-
-                    # Loại bỏ các padding trong target_ids
-                    target_ids_no_pad = []
-                    for i in range(target_ids.size(0)):
-                        target_no_pad = target_ids[i][target_ids[i] != tokenizer.pad_token_id]
-                        target_ids_no_pad.append(target_no_pad)
-                    target_ids_no_pad = torch.nn.utils.rnn.pad_sequence(target_ids_no_pad, batch_first=True, padding_value=-100)
-
-                    # Tính CTC Loss
-                    loss = ctc_loss(log_probs, target_ids_no_pad, input_lengths, target_lengths)
-
+                                    labels=target_ids, decoder_attention_mask=target_mask)
+                    loss = outputs.loss
+                
                 if args.n_gpu > 1:
                     loss = loss.mean()
                 if args.gradient_accumulation_steps > 1:
