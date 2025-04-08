@@ -50,7 +50,8 @@ logger = logging.getLogger(__name__)
 
 # Hàm lưu checkpoint
 def save_checkpoint(model, optimizer, scheduler, epoch, loss, args):
-    checkpoint_dir = os.path.join(args.output_dir, 'checkpoints')
+    # Sửa checkpoint_dir để lưu vào /kaggle/output/
+    checkpoint_dir = os.path.join("/kaggle/output/", os.path.basename(args.output_dir), 'checkpoints')
     if not os.path.exists(checkpoint_dir):
         os.makedirs(checkpoint_dir)
     
@@ -68,7 +69,8 @@ def save_checkpoint(model, optimizer, scheduler, epoch, loss, args):
 
 # Hàm load checkpoint gần nhất
 def load_latest_checkpoint(model, optimizer, scheduler, args):
-    checkpoint_dir = os.path.join(args.output_dir, 'checkpoints')
+    # Sửa checkpoint_dir để load từ /kaggle/output/
+    checkpoint_dir = os.path.join("/kaggle/output/", os.path.basename(args.output_dir), 'checkpoints')
     if not os.path.exists(checkpoint_dir):
         return model, optimizer, scheduler, args.start_epoch, None
     
@@ -86,9 +88,7 @@ def load_latest_checkpoint(model, optimizer, scheduler, args):
     loss = checkpoint['loss']
     
     logger.info(f"Loaded checkpoint from {latest_checkpoint} at epoch {start_epoch}")
-    return model, optimizer, scheduler, start_epoch, loss
-
-def eval_ppl_epoch(args, eval_data, eval_examples, model, tokenizer):
+    return model, optimizer, scheduler, start_epoch, lossdef eval_ppl_epoch(args, eval_data, eval_examples, model, tokenizer):
     eval_sampler = SequentialSampler(eval_data)
     eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size,
                                  num_workers=4, pin_memory=True)
@@ -240,7 +240,7 @@ def main():
                                                     num_warmup_steps=args.warmup_steps,
                                                     num_training_steps=num_train_optimization_steps)
 
-        # Load checkpoint gần nhất nếu có
+        # Load checkpoint từ /kaggle/output/
         model, optimizer, scheduler, start_epoch, _ = load_latest_checkpoint(model, optimizer, scheduler, args)
 
         train_example_num = len(train_data)
@@ -297,7 +297,7 @@ def main():
                     train_loss = round(tr_loss * args.gradient_accumulation_steps / (nb_tr_steps + 1), 4)
                     bar.set_description("[{}] Train loss {}".format(cur_epoch, round(train_loss, 3)))
 
-            # Lưu checkpoint sau mỗi epoch
+          # Lưu checkpoint vào /kaggle/output/
             save_checkpoint(model, optimizer, scheduler, cur_epoch + 1, tr_loss / nb_tr_steps, args)
 
             if args.do_eval:
