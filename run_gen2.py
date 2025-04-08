@@ -28,8 +28,9 @@ from tqdm import tqdm
 import multiprocessing
 import time
 import glob
-
 import torch
+from torch import nn
+from torch.nn import functional as F
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader, SequentialSampler, RandomSampler
 from torch.utils.data.distributed import DistributedSampler
@@ -49,7 +50,7 @@ logger = logging.getLogger(__name__)
 
 # Hàm lưu checkpoint
 def save_checkpoint(model, optimizer, scheduler, epoch, loss, args):
-    checkpoint_dir = os.path.join(args.output_dir, 'checkpoints')
+    checkpoint_dir = os.path.join("/kaggle/output/", os.path.basename(args.output_dir), 'checkpoints')
     if not os.path.exists(checkpoint_dir):
         os.makedirs(checkpoint_dir)
     
@@ -67,7 +68,7 @@ def save_checkpoint(model, optimizer, scheduler, epoch, loss, args):
 
 # Hàm load checkpoint gần nhất
 def load_latest_checkpoint(model, optimizer, scheduler, args):
-    checkpoint_dir = os.path.join(args.output_dir, 'checkpoints')
+    checkpoint_dir = os.path.join("/kaggle/output/", os.path.basename(args.output_dir), 'checkpoints')
     if not os.path.exists(checkpoint_dir):
         return model, optimizer, scheduler, args.start_epoch, None
     
@@ -76,7 +77,7 @@ def load_latest_checkpoint(model, optimizer, scheduler, args):
         return model, optimizer, scheduler, args.start_epoch, None
     
     latest_checkpoint = max(checkpoint_files, key=os.path.getctime)
-    checkpoint = torch.load(latest_checkpoint)
+    checkpoint = torch.load(latest_checkpoint, weights_only=False)
     
     model.load_state_dict(checkpoint['model_state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -190,7 +191,6 @@ def eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, split_tag,
                     f2.write(str(gold.idx) + '\t' + gold.source.strip() + '\n')
                 else:
                     f.write(pred_nl.strip() + '\n')
-physics import glob
                     f1.write(gold.target.strip() + '\n')
                     f2.write(gold.source.strip() + '\n')
 
@@ -248,7 +248,7 @@ def main():
                                                     num_warmup_steps=args.warmup_steps,
                                                     num_training_steps=num_train_optimization_steps)
 
-        # Load checkpoint gần nhất nếu có
+        # Load checkpoint từ /kaggle/output/
         model, optimizer, scheduler, start_epoch, _ = load_latest_checkpoint(model, optimizer, scheduler, args)
 
         train_example_num = len(train_data)
@@ -272,6 +272,10 @@ def main():
                 source_ids, target_ids = batch
                 source_mask = source_ids.ne(tokenizer.pad_token_id)
                 target_mask = target_ids.ne(tokenizer.pad_token_id)
+
+                # Thêm log để kiểm tra dữ liệu
+                logger.info(f"Step {step}: source_ids shape: {source_ids.shape}, target_ids shape: {target_ids.shape}")
+                logger.info(f"Step {step}: source_mask shape: {source_mask.shape}, target_mask shape: {target_mask.shape}")
 
                 if args.model_type == 'roberta':
                     loss, _, _ = model(source_ids=source_ids, source_mask=source_mask,
@@ -299,7 +303,7 @@ def main():
                     train_loss = round(tr_loss * args.gradient_accumulation_steps / (nb_tr_steps + 1), 4)
                     bar.set_description("[{}] Train loss {}".format(cur_epoch, round(train_loss, 3)))
 
-            # Lưu checkpoint sau mỗi epoch
+            # Lưu checkpoint vào /kaggle/output/
             save_checkpoint(model, optimizer, scheduler, cur_epoch + 1, tr_loss / nb_tr_steps, args)
 
             if args.do_eval:
