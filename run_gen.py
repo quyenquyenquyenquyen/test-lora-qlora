@@ -267,6 +267,10 @@ def main():
                 source_mask = source_ids.ne(tokenizer.pad_token_id)
                 target_mask = target_ids.ne(tokenizer.pad_token_id)
 
+                # Thêm log để kiểm tra dữ liệu
+                logger.info(f"Step {step}: source_ids shape: {source_ids.shape}, target_ids shape: {target_ids.shape}")
+                logger.info(f"Step {step}: source_mask shape: {source_mask.shape}, target_mask shape: {target_mask.shape}")
+
                 if args.model_type == 'roberta':
                     loss, _, _ = model(source_ids=source_ids, source_mask=source_mask,
                                        target_ids=target_ids, target_mask=target_mask)
