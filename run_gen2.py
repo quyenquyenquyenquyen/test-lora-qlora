@@ -35,7 +35,8 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader, SequentialSampler, RandomSampler
 from torch.utils.data.distributed import DistributedSampler
 from torch.optim import AdamW
-from transformers import get_linear_schedule_with_warmup
+from transformers import get_linear_schedule_with_warmup, BitsAndBytesConfig
+from peft import LoraConfig, get_peft_model
 from models import build_or_load_gen_model
 from evaluator import smooth_bleu
 from evaluator.CodeBLEU import calc_code_bleu
@@ -112,8 +113,6 @@ def eval_ppl_epoch(args, eval_data, eval_examples, model, tokenizer):
                 outputs = model(input_ids=source_ids, attention_mask=source_mask,
                                 labels=target_ids, decoder_attention_mask=target_mask)
                 loss = outputs.loss
-        print('loss', loss)
-        
         if args.n_gpu > 1:
             loss = loss.mean()
         eval_loss += loss.item()
@@ -152,15 +151,11 @@ def eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, split_tag,
                                        early_stopping=args.task == 'summarize',
                                        max_length=args.max_target_length,
                                        num_return_sequences=args.beam_size)
-                print('predictions:', len(list(preds.cpu().numpy())))
                 top_preds = list(preds.cpu().numpy())
             pred_ids.extend(top_preds)
 
     pred_nls = [tokenizer.decode(id, skip_special_tokens=True, clean_up_tokenization_spaces=False) for id in pred_ids]
-    print('predictions:', len(pred_nls))
-    print(int(len(pred_nls)/args.beam_size))
     pred_nls_new = ['\t'.join(pred_nls[i*args.beam_size: (i+1)*args.beam_size]) for i in range(int(len(pred_nls)/args.beam_size))]
-    print('predictions after merge:', len(pred_nls_new))
     pred_nls = pred_nls_new
 
     output_fn = os.path.join(args.res_dir, "test_{}.output".format(criteria))
@@ -202,7 +197,7 @@ def eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, split_tag,
 
         result = {'em': np.mean(dev_accs) * 100, 'bleu': bleu}
         if args.task == 'concode':
-            result['codebleu'] = codebleu * 100
+            result['codebleu'] = calc_code_bleu(gold_fn, output_fn, 'java') * 100
 
     logger.info("***** Eval results *****")
     for key in sorted(result.keys()):
@@ -218,7 +213,29 @@ def main():
 
     set_dist(args)
     set_seed(args)
+    
+    # Tải mô hình với QLoRA từ models.py
     config, model, tokenizer = build_or_load_gen_model(args)
+    
+    # Áp dụng QLoRA nếu chưa được áp dụng trong build_or_load_gen_model
+    if not hasattr(model, 'peft_config'):  # Kiểm tra xem model đã được áp dụng LoRA chưa
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.bfloat16
+        )
+        lora_config = LoraConfig(
+            r=16,
+            lora_alpha=32,
+            target_modules=["q_proj", "v_proj"],
+            lora_dropout=0.05,
+            bias="none",
+            task_type="SEQ_2_SEQ_LM"
+        )
+        model = get_peft_model(model, lora_config)
+        logger.info("Applied QLoRA to the model")
+
     model.to(args.device)
     if args.n_gpu > 1:
         model = torch.nn.DataParallel(model)
@@ -236,11 +253,10 @@ def main():
         train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=args.train_batch_size,
                                       num_workers=4, pin_memory=True)
 
-        no_decay = ['bias', 'LayerNorm.weight']
+        # Chỉ tối ưu hóa các tham số LoRA (requires_grad=True)
         optimizer_grouped_parameters = [
-            {'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
-             'weight_decay': args.weight_decay},
-            {'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
+            {'params': [p for n, p in model.named_parameters() if p.requires_grad],
+             'weight_decay': args.weight_decay}
         ]
         optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
         num_train_optimization_steps = args.num_train_epochs * len(train_dataloader)
@@ -252,7 +268,7 @@ def main():
         model, optimizer, scheduler, start_epoch, _ = load_latest_checkpoint(model, optimizer, scheduler, args)
 
         train_example_num = len(train_data)
-        logger.info("***** Running training *****")
+        logger.info("***** Running training with QLoRA *****")
         logger.info("  Num examples = %d", train_example_num)
         logger.info("  Batch size = %d", args.train_batch_size)
         logger.info("  Batch num = %d", math.ceil(train_example_num / args.train_batch_size))
