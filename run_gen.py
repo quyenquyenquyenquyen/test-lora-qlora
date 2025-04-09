@@ -290,4 +290,4 @@ def main():
                     if args.always_save_model:
                         model_to_save = model.module if hasattr(model, 'module') else model
                         output_model_file = os.path.join(output_dir, "pytorch_model.bin")
-                        torch.save(model_to_sav
+                        torch.save(model_to_sav)
