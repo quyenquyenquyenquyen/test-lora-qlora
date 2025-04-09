@@ -13,11 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""
-Fine-tuning the library models for language modeling on a text file (GPT, GPT-2, BERT, RoBERTa).
-GPT and GPT-2 are fine-tuned using a causal language modeling (CLM) loss while BERT and RoBERTa are fine-tuned
-using a masked language modeling (MLM) loss.
-"""
 
 import os
 import logging
@@ -48,12 +43,10 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message
                     level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Hàm lưu checkpoint
 def save_checkpoint(model, optimizer, scheduler, epoch, loss, args):
     checkpoint_dir = os.path.join("/kaggle/output/", os.path.basename(args.output_dir), 'checkpoints')
     if not os.path.exists(checkpoint_dir):
         os.makedirs(checkpoint_dir)
-    
     checkpoint = {
         'epoch': epoch,
         'model_state_dict': model.module.state_dict() if hasattr(model, 'module') else model.state_dict(),
@@ -61,30 +54,24 @@ def save_checkpoint(model, optimizer, scheduler, epoch, loss, args):
         'scheduler_state_dict': scheduler.state_dict(),
         'loss': loss
     }
-    
     filepath = os.path.join(checkpoint_dir, f'checkpoint_epoch_{epoch}.pt')
     torch.save(checkpoint, filepath)
     logger.info(f'Saved checkpoint at epoch {epoch} to {filepath}')
 
-# Hàm load checkpoint gần nhất
 def load_latest_checkpoint(model, optimizer, scheduler, args):
     checkpoint_dir = os.path.join("/kaggle/output/", os.path.basename(args.output_dir), 'checkpoints')
     if not os.path.exists(checkpoint_dir):
         return model, optimizer, scheduler, args.start_epoch, None
-    
     checkpoint_files = glob.glob(os.path.join(checkpoint_dir, 'checkpoint_epoch_*.pt'))
     if not checkpoint_files:
         return model, optimizer, scheduler, args.start_epoch, None
-    
     latest_checkpoint = max(checkpoint_files, key=os.path.getctime)
     checkpoint = torch.load(latest_checkpoint, weights_only=False)
-    
     model.load_state_dict(checkpoint['model_state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
     start_epoch = checkpoint['epoch']
     loss = checkpoint['loss']
-    
     logger.info(f"Loaded checkpoint from {latest_checkpoint} at epoch {start_epoch}")
     return model, optimizer, scheduler, start_epoch, loss
 
@@ -95,7 +82,6 @@ def eval_ppl_epoch(args, eval_data, eval_examples, model, tokenizer):
     logger.info("  " + "***** Running ppl evaluation *****")
     logger.info("  Num examples = %d", len(eval_examples))
     logger.info("  Batch size = %d", args.eval_batch_size)
-
     model.eval()
     eval_loss, batch_num = 0, 0
     for batch in tqdm(eval_dataloader, total=len(eval_dataloader), desc="Eval ppl"):
@@ -103,7 +89,6 @@ def eval_ppl_epoch(args, eval_data, eval_examples, model, tokenizer):
         source_ids, target_ids = batch
         source_mask = source_ids.ne(tokenizer.pad_token_id)
         target_mask = target_ids.ne(tokenizer.pad_token_id)
-
         with torch.no_grad():
             if args.model_type == 'roberta':
                 loss, _, _ = model(source_ids=source_ids, source_mask=source_mask,
@@ -112,13 +97,10 @@ def eval_ppl_epoch(args, eval_data, eval_examples, model, tokenizer):
                 outputs = model(input_ids=source_ids, attention_mask=source_mask,
                                 labels=target_ids, decoder_attention_mask=target_mask)
                 loss = outputs.loss
-        print('loss', loss)
-        
         if args.n_gpu > 1:
             loss = loss.mean()
         eval_loss += loss.item()
         batch_num += 1
-    
     eval_loss = eval_loss / batch_num
     eval_ppl = round(np.exp(eval_loss), 5)
     return eval_ppl
@@ -133,10 +115,8 @@ def eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, split_tag,
                                      num_workers=4, pin_memory=True)
     else:
         eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size)
-
     model.eval()
     pred_ids = []
-    bleu, codebleu = 0.0, 0.0
     for batch in tqdm(eval_dataloader, total=len(eval_dataloader), desc="Eval bleu for {} set".format(split_tag)):
         source_ids = batch[0].to(args.device)
         source_mask = source_ids.ne(tokenizer.pad_token_id)
@@ -152,40 +132,31 @@ def eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, split_tag,
                                        early_stopping=args.task == 'summarize',
                                        max_length=args.max_target_length,
                                        num_return_sequences=args.beam_size)
-                print('predictions:', len(list(preds.cpu().numpy())))
                 top_preds = list(preds.cpu().numpy())
             pred_ids.extend(top_preds)
-
     pred_nls = [tokenizer.decode(id, skip_special_tokens=True, clean_up_tokenization_spaces=False) for id in pred_ids]
-    print('predictions:', len(pred_nls))
-    print(int(len(pred_nls)/args.beam_size))
     pred_nls_new = ['\t'.join(pred_nls[i*args.beam_size: (i+1)*args.beam_size]) for i in range(int(len(pred_nls)/args.beam_size))]
-    print('predictions after merge:', len(pred_nls_new))
     pred_nls = pred_nls_new
-
     output_fn = os.path.join(args.res_dir, "test_{}.output".format(criteria))
     gold_fn = os.path.join(args.res_dir, "test_{}.gold".format(criteria))
     src_fn = os.path.join(args.res_dir, "test_{}.src".format(criteria))
-
     if args.task in ['defect']:
         target_dict = {0: 'false', 1: 'true'}
         golds = [target_dict[ex.target] for ex in eval_examples]
         eval_acc = np.mean([int(p == g) for p, g in zip(pred_nls, golds)])
         result = {'em': eval_acc * 100, 'bleu': 0, 'codebleu': 0}
-
         with open(output_fn, 'w') as f, open(gold_fn, 'w') as f1, open(src_fn, 'w') as f2:
             for pred_nl, gold in zip(pred_nls, eval_examples):
                 f.write(pred_nl.strip() + '\n')
                 f1.write(target_dict[gold.target] + '\n')
                 f2.write(gold.source.strip() + '\n')
-            logger.info("Save the predictions into %s", output_fn)
     else:
         dev_accs, predictions = [], []
         with open(output_fn, 'w') as f, open(gold_fn, 'w') as f1, open(src_fn, 'w') as f2:
             for pred_nl, gold in zip(pred_nls, eval_examples):
                 dev_accs.append(pred_nl.strip() == gold.target.strip())
                 if args.task in ['summarize']:
-                    predictions.append(str(gold.idx) + '\t' + pred_nl)  # Sửa lỗi ở đây
+                    predictions.append(str(gold.idx) + '\t' + pred_nl)
                     f.write(str(gold.idx) + '\t' + pred_nl.strip() + '\n')
                     f1.write(str(gold.idx) + '\t' + gold.target.strip() + '\n')
                     f2.write(str(gold.idx) + '\t' + gold.source.strip() + '\n')
@@ -193,21 +164,17 @@ def eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, split_tag,
                     f.write(pred_nl.strip() + '\n')
                     f1.write(gold.target.strip() + '\n')
                     f2.write(gold.source.strip() + '\n')
-
         if args.task == 'summarize':
             (goldMap, predictionMap) = smooth_bleu.computeMaps(predictions, gold_fn)
             bleu = round(smooth_bleu.bleuFromMaps(goldMap, predictionMap)[0], 2)
         else:
             bleu = round(_bleu(gold_fn, output_fn), 2)
-
         result = {'em': np.mean(dev_accs) * 100, 'bleu': bleu}
         if args.task == 'concode':
-            result['codebleu'] = codebleu * 100
-
+            result['codebleu'] = calc_code_bleu(gold_fn, output_fn, 'java') * 100
     logger.info("***** Eval results *****")
     for key in sorted(result.keys()):
         logger.info("  %s = %s", key, str(round(result[key], 4)))
-
     return result
 
 def main():
@@ -236,11 +203,9 @@ def main():
         train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=args.train_batch_size,
                                       num_workers=4, pin_memory=True)
 
-        no_decay = ['bias', 'LayerNorm.weight']
         optimizer_grouped_parameters = [
-            {'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
-             'weight_decay': args.weight_decay},
-            {'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
+            {'params': [p for n, p in model.named_parameters() if p.requires_grad],
+             'weight_decay': args.weight_decay}
         ]
         optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
         num_train_optimization_steps = args.num_train_epochs * len(train_dataloader)
@@ -248,7 +213,6 @@ def main():
                                                     num_warmup_steps=args.warmup_steps,
                                                     num_training_steps=num_train_optimization_steps)
 
-        # Load checkpoint từ /kaggle/output/
         model, optimizer, scheduler, start_epoch, _ = load_latest_checkpoint(model, optimizer, scheduler, args)
 
         train_example_num = len(train_data)
@@ -272,10 +236,6 @@ def main():
                 source_ids, target_ids = batch
                 source_mask = source_ids.ne(tokenizer.pad_token_id)
                 target_mask = target_ids.ne(tokenizer.pad_token_id)
-
-                # Thêm log để kiểm tra dữ liệu
-                logger.info(f"Step {step}: source_ids shape: {source_ids.shape}, target_ids shape: {target_ids.shape}")
-                logger.info(f"Step {step}: source_mask shape: {source_mask.shape}, target_mask shape: {target_mask.shape}")
 
                 if args.model_type == 'roberta':
                     loss, _, _ = model(source_ids=source_ids, source_mask=source_mask,
@@ -303,7 +263,6 @@ def main():
                     train_loss = round(tr_loss * args.gradient_accumulation_steps / (nb_tr_steps + 1), 4)
                     bar.set_description("[{}] Train loss {}".format(cur_epoch, round(train_loss, 3)))
 
-            # Lưu checkpoint vào /kaggle/output/
             save_checkpoint(model, optimizer, scheduler, cur_epoch + 1, tr_loss / nb_tr_steps, args)
 
             if args.do_eval:
@@ -317,121 +276,18 @@ def main():
                 result = {'epoch': cur_epoch, 'global_step': global_step, 'eval_ppl': eval_ppl}
                 for key in sorted(result.keys()):
                     logger.info("  %s = %s", key, str(result[key]))
-                logger.info("  " + "*" * 20)
                 if args.data_num == -1:
                     tb_writer.add_scalar('dev_ppl', eval_ppl, cur_epoch)
-
-                if args.save_last_checkpoints:
-                    last_output_dir = os.path.join(args.output_dir, 'checkpoint-last')
-                    if not os.path.exists(last_output_dir):
-                        os.makedirs(last_output_dir)
-                    model_to_save = model.module if hasattr(model, 'module') else model
-                    output_model_file = os.path.join(last_output_dir, "pytorch_model.bin")
-                    torch.save(model_to_save.state_dict(), output_model_file)
-                    logger.info("Save the last model into %s", output_model_file)
 
                 if eval_ppl < best_ppl:
                     not_loss_dec_cnt = 0
                     logger.info("  Best ppl:%s", eval_ppl)
-                    logger.info("  " + "*" * 20)
                     fa.write("[%d] Best ppl changed into %.4f\n" % (cur_epoch, eval_ppl))
                     best_ppl = eval_ppl
-
                     output_dir = os.path.join(args.output_dir, 'checkpoint-best-ppl')
                     if not os.path.exists(output_dir):
                         os.makedirs(output_dir)
                     if args.always_save_model:
                         model_to_save = model.module if hasattr(model, 'module') else model
                         output_model_file = os.path.join(output_dir, "pytorch_model.bin")
-                        torch.save(model_to_save.state_dict(), output_model_file)
-                        logger.info("Save the best ppl model into %s", output_model_file)
-                else:
-                    not_loss_dec_cnt += 1
-                    logger.info("Ppl does not decrease for %d epochs", not_loss_dec_cnt)
-                    if all([x > args.patience for x in [not_bleu_em_inc_cnt, not_loss_dec_cnt]]):
-                        early_stop_str = "[%d] Early stop as not_bleu_em_inc_cnt=%d, and not_loss_dec_cnt=%d\n" % (
-                            cur_epoch, not_bleu_em_inc_cnt, not_loss_dec_cnt)
-                        logger.info(early_stop_str)
-                        fa.write(early_stop_str)
-                        break
-                
-                logger.info("***** CUDA.empty_cache() *****")
-                torch.cuda.empty_cache()
-                
-                if args.do_eval_bleu:
-                    eval_examples, eval_data = load_and_cache_gen_data(args, args.dev_filename, pool, tokenizer, 'dev',
-                                                                       only_src=True, is_sample=True)
-                    result = eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, 'dev', 'e%d' % cur_epoch)
-                    dev_bleu, dev_em = result['bleu'], result['em']
-                    if args.task in ['summarize']:
-                        dev_bleu_em = dev_bleu
-                    elif args.task in ['defect']:
-                        dev_bleu_em = dev_em
-                    else:
-                        dev_bleu_em = dev_bleu + dev_em
-                    if args.data_num == -1:
-                        tb_writer.add_scalar('dev_bleu_em', dev_bleu_em, cur_epoch)
-                    
-                    if dev_bleu_em > best_bleu_em:
-                        not_bleu_em_inc_cnt = 0
-                        logger.info("  [%d] Best bleu+em: %.2f (bleu: %.2f, em: %.2f)",
-                                    cur_epoch, dev_bleu_em, dev_bleu, dev_em)
-                        logger.info("  " + "*" * 20)
-                        best_bleu_em = dev_bleu_em
-                        fa.write("[%d] Best bleu+em changed into %.2f (bleu: %.2f, em: %.2f)\n" % (
-                            cur_epoch, best_bleu_em, dev_bleu, dev_em))
-                        output_dir = os.path.join(args.output_dir, 'checkpoint-best-bleu')
-                        if not os.path.exists(output_dir):
-                            os.makedirs(output_dir)
-                        if args.data_num == -1 or args.always_save_model:
-                            model_to_save = model.module if hasattr(model, 'module') else model
-                            output_model_file = os.path.join(output_dir, "pytorch_model.bin")
-                            torch.save(model_to_save.state_dict(), output_model_file)
-                            logger.info("Save the best bleu model into %s", output_model_file)
-                    else:
-                        not_bleu_em_inc_cnt += 1
-                        logger.info("Bleu does not increase for %d epochs", not_bleu_em_inc_cnt)
-                        fa.write(
-                            "[%d] Best bleu+em (%.2f) does not drop changed for %d epochs, cur bleu+em: %.2f (bleu: %.2f, em: %.2f)\n" % (
-                                cur_epoch, best_bleu_em, not_bleu_em_inc_cnt, dev_bleu_em, dev_bleu, dev_em))
-                        if all([x > args.patience for x in [not_bleu_em_inc_cnt, not_loss_dec_cnt]]):
-                            stop_early_str = "[%d] Early stop as not_bleu_em_inc_cnt=%d, and not_loss_dec_cnt=%d\n" % (
-                                cur_epoch, not_bleu_em_inc_cnt, not_loss_dec_cnt)
-                            logger.info(stop_early_str)
-                            fa.write(stop_early_str)
-                            break
-            
-            logger.info("***** CUDA.empty_cache() *****")
-            torch.cuda.empty_cache()
-
-        if args.local_rank in [-1, 0] and args.data_num == -1:
-            tb_writer.close()
-        logger.info("Finish training and take %s", get_elapse_time(t0))
-
-    if args.do_test:
-        logger.info("  " + "***** Testing *****")
-        logger.info("  Batch size = %d", args.eval_batch_size)
-
-        for criteria in ['best-bleu']:
-            file = os.path.join(args.output_dir, 'checkpoint-{}/pytorch_model.bin'.format(criteria))
-            logger.info("Reload model from {}".format(file))
-            model.load_state_dict(torch.load(file))
-            eval_examples, eval_data = load_and_cache_gen_data(args, args.test_filename, pool, tokenizer, 'test',
-                                                               only_src=True, is_sample=False)
-            result = eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, 'test', criteria)
-            test_bleu, test_em = result['bleu'], result['em']
-            test_codebleu = result['codebleu'] if 'codebleu' in result else 0
-            result_str = "[%s] bleu-4: %.2f, em: %.4f, codebleu: %.4f\n" % (criteria, test_bleu, test_em, test_codebleu)
-            logger.info(result_str)
-            fa.write(result_str)
-            if args.res_fn:
-                with open(args.res_fn, 'a+') as f:
-                    f.write('[Time: {}] {}\n'.format(get_elapse_time(t0), file))
-                    f.write(result_str)
-    
-    logger.info("Finish and take {}".format(get_elapse_time(t0)))
-    fa.write("Finish and take {}".format(get_elapse_time(t0)))
-    fa.close()
-
-if __name__ == "__main__":
-    main()
+                        torch.save(model_to_sav
