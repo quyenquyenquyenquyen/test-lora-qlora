@@ -125,13 +125,15 @@ def eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, split_tag,
                 preds = model(source_ids=source_ids, source_mask=source_mask)
                 top_preds = [pred[0].cpu().numpy() for pred in preds]
             else:
-                preds = model.generate(source_ids,
-                                       attention_mask=source_mask,
-                                       use_cache=True,
-                                       num_beams=args.beam_size,
-                                       early_stopping=args.task == 'summarize',
-                                       max_length=args.max_target_length,
-                                       num_return_sequences=args.beam_size)
+                preds = model.generate(
+                  input_ids=source_ids,
+                  attention_mask=source_mask,
+                  use_cache=True,
+                  num_beams=args.beam_size,
+                  early_stopping=args.task == 'summarize',
+                  max_length=args.max_target_length,
+                  num_return_sequences=args.beam_size
+              )
                 top_preds = list(preds.cpu().numpy())
             pred_ids.extend(top_preds)
     pred_nls = [tokenizer.decode(id, skip_special_tokens=True, clean_up_tokenization_spaces=False) for id in pred_ids]
