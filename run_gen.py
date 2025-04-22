@@ -337,12 +337,6 @@ def eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, split_tag,
     return result
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--use_lora", action="store_true", help="Whether to use LoRA for fine-tuning")
-    args = add_args(parser) # Hàm add_args cần được định nghĩa ở đâu đó (ví dụ: trong configs.py)
-    logger.info("Arguments: %s", args)
-    t0 = time.time()
-
     # Thiết lập môi trường distributed và seed
     set_dist(args) # Hàm set_dist cần được định nghĩa (ví dụ: trong configs.py)
     set_seed(args) # Hàm set_seed cần được định nghĩa (ví dụ: trong configs.py)
