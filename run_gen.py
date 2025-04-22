@@ -521,7 +521,7 @@ def main():
                         nb_tr_steps += 1 # Số lần optimizer step thực sự
 
                         # Log loss định kỳ (chỉ rank chính)
-                        if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
+                        if args.local_rank in [-1, 0] and args.log_steps > 0 and global_step % args.log_steps == 0:
                              avg_loss = tr_loss / (step + 1) # Loss trung bình từ đầu epoch
                              if tb_writer:
                                  tb_writer.add_scalar('lr', scheduler.get_last_lr()[0], global_step)
