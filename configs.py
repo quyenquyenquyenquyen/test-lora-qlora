@@ -12,7 +12,7 @@ def add_args(parser):
     parser.add_argument("--sub_task", type=str, default='')
     parser.add_argument("--lang", type=str, default='')
     parser.add_argument("--eval_task", type=str, default='')
-    parser.add_argument("--model_type", default="codet5", type=str, choices=['roberta', 'bart', 'codet5','t5'])
+    parser.add_argument("--model_type", default="codet5", type=str, choices=['roberta', 'bart', 'codet5', 't5'])
     parser.add_argument("--add_lang_ids", action='store_true')
     parser.add_argument("--data_num", default=-1, type=int)
     parser.add_argument("--start_epoch", default=0, type=int)
@@ -104,6 +104,7 @@ def add_args(parser):
 
     args = parser.parse_args()
 
+    # Task-specific configuration
     if args.task == 'summarize':
         args.lang = args.sub_task
     elif args.task in ['refine', 'concode', 'clone']:
