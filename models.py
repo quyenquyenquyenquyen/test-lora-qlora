@@ -1,6 +1,6 @@
 from layer import Linear, Embedding, Conv1d, Conv2d, Conv3d
 # Import LoRA-enabled layers
-torch_lora = True  # flag for clarity
+import layer  # needed for Seq2Seq usage
 from layer import Linear as LoRALinear, Embedding as LoRAEmbedding
 import torch
 import torch.nn as nn
@@ -26,13 +26,13 @@ def get_model_size(model):
 
 def inject_lora(module, r, alpha, dropout, merge_weights=True):
     """
-    Recursively replace nn.Linear and nn.Embedding with LoRA-enabled versions.
+    Recursively replace nn.Linear and nn.Embedding with LoRA-enabled versions,
+    preserving pretrained weights.
     """
     for name, child in list(module.named_children()):
-        # First recurse into children
         inject_lora(child, r, alpha, dropout, merge_weights)
-        # Replace Linear layers
         if isinstance(child, nn.Linear):
+            # create LoRA layer and copy pretrained weights
             lora_layer = LoRALinear(
                 in_features=child.in_features,
                 out_features=child.out_features,
@@ -42,8 +42,11 @@ def inject_lora(module, r, alpha, dropout, merge_weights=True):
                 merge_weights=merge_weights,
                 bias=(child.bias is not None)
             )
+            # preserve original weights/bias
+            lora_layer.weight.data = child.weight.data.clone()
+            if child.bias is not None:
+                lora_layer.bias.data = child.bias.data.clone()
             setattr(module, name, lora_layer)
-        # Replace Embedding layers
         elif isinstance(child, nn.Embedding):
             lora_layer = LoRAEmbedding(
                 num_embeddings=child.num_embeddings,
@@ -52,6 +55,8 @@ def inject_lora(module, r, alpha, dropout, merge_weights=True):
                 lora_alpha=alpha,
                 merge_weights=merge_weights
             )
+            # preserve original embeddings
+            lora_layer.weight.data = child.weight.data.clone()
             setattr(module, name, lora_layer)
 
 
