@@ -1,3 +1,4 @@
+from layer import Linear, Embedding, Conv1d, Conv2d, Conv3d
 import torch
 import torch.nn as nn
 import numpy as np
@@ -50,8 +51,8 @@ class RobertaClassificationHead(nn.Module):
 
     def __init__(self, config):
         super().__init__()
-        self.dense = nn.Linear(config.hidden_size * 2, config.hidden_size)
-        self.out_proj = nn.Linear(config.hidden_size, 2)
+        self.dense = Linear(config.hidden_size * 2, config.hidden_size)
+        self.out_proj = Linear(config.hidden_size, 2)
 
     def forward(self, x, **kwargs):
         x = x.reshape(-1, x.size(-1) * 2)
@@ -128,7 +129,7 @@ class DefectModel(nn.Module):
         self.encoder = encoder
         self.config = config
         self.tokenizer = tokenizer
-        self.classifier = nn.Linear(config.hidden_size, 2)
+        self.classifier = Linear(config.hidden_size, 2)
         self.args = args
 
     def get_t5_vec(self, source_ids):
@@ -205,8 +206,8 @@ class Seq2Seq(nn.Module):
         self.decoder = decoder
         self.config = config
         self.register_buffer("bias", torch.tril(torch.ones(2048, 2048)))
-        self.dense = nn.Linear(config.hidden_size, config.hidden_size)
-        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.dense = Linear(config.hidden_size, config.hidden_size)
+        self.lm_head = Linear(config.hidden_size, config.vocab_size, bias=False)
         self.lsm = nn.LogSoftmax(dim=-1)
         self.tie_weights()
 
