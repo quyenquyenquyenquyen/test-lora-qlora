@@ -193,34 +193,50 @@ def main():
     if args.n_gpu > 1:
         # for DataParallel
         model = torch.nn.DataParallel(model)
+
+    # === Freeze non-LoRA parameters ===
+    for n, p in model.named_parameters():
+        if 'lora_A' not in n and 'lora_B' not in n:
+            p.requires_grad = False
+    logger.info("Froze %d non-LoRA parameters", sum(not p.requires_grad for p in model.parameters()))
+
     pool = multiprocessing.Pool(args.cpu_cont)
-    args.train_filename, args.dev_filename, args.test_filename = get_filenames(args.data_dir, args.task, args.sub_task)
+    args.train_filename, args.dev_filename, args.test_filename = \
+        get_filenames(args.data_dir, args.task, args.sub_task)
     fa = open(os.path.join(args.output_dir, 'summary.log'), 'a+')
 
     if args.do_train:
         if args.local_rank in [-1, 0] and args.data_num == -1:
-            summary_fn = '{}/{}'.format(args.summary_dir, '/'.join(args.output_dir.split('/')[1:]))
+            summary_fn = '{}/{}'.format(
+                args.summary_dir,
+                '/'.join(args.output_dir.split('/')[1:])
+            )
             tb_writer = SummaryWriter(summary_fn)
 
         # Prepare training data loader
-        train_examples, train_data = load_and_cache_gen_data(args, args.train_filename, pool, tokenizer, 'train')
+        train_examples, train_data = load_and_cache_gen_data(
+            args, args.train_filename, pool, tokenizer, 'train')
         train_sampler = RandomSampler(train_data) if args.local_rank == -1 else DistributedSampler(train_data)
-        train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=args.train_batch_size,
-                                      num_workers=4, pin_memory=True)
+        train_dataloader = DataLoader(
+            train_data, sampler=train_sampler,
+            batch_size=args.train_batch_size,
+            num_workers=4, pin_memory=True
+        )
 
-        # Prepare optimizer and schedule (linear warmup and decay)
-        no_decay = ['bias', 'LayerNorm.weight']
-        optimizer_grouped_parameters = [
-            {'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
-             'weight_decay': args.weight_decay},
-            {'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
-        ]
-        optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
+        # === Only LoRA parameters to optimizer ===
+        lora_params = [p for p in model.parameters() if p.requires_grad]
+        optimizer = AdamW(
+            lora_params,
+            lr=args.learning_rate,
+            eps=args.adam_epsilon
+        )
         num_train_optimization_steps = args.num_train_epochs * len(train_dataloader)
-        scheduler = get_linear_schedule_with_warmup(optimizer,
-                                                    num_warmup_steps=args.warmup_steps,
-                                                    num_training_steps=num_train_optimization_steps)
-        print("args.warmup_steps",args.warmup_steps)
+        scheduler = get_linear_schedule_with_warmup(
+            optimizer,
+            num_warmup_steps=args.warmup_steps,
+            num_training_steps=num_train_optimization_steps
+        )
+        print("args.warmup_steps", args.warmup_steps)
         print("num_train_optimization_steps:", num_train_optimization_steps)
         # Start training
         train_example_num = len(train_data)
@@ -229,7 +245,7 @@ def main():
         logger.info("  Batch size = %d", args.train_batch_size)
         logger.info("  Batch num = %d", math.ceil(train_example_num / args.train_batch_size))
         logger.info("  Num epoch = %d", args.num_train_epochs)
-        print( args.model_type)
+        print(args.model_type)
 
         dev_dataset = {}
         global_step, best_bleu_em, best_ppl = 0, -1, 1e6
