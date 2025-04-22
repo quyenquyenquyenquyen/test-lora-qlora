@@ -6,7 +6,6 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-
 def add_args(parser):
     parser.add_argument("--task", type=str, required=True,
                         choices=['summarize', 'concode', 'translate', 'refine', 'defect', 'clone', 'multi_task'])
@@ -29,14 +28,21 @@ def add_args(parser):
     parser.add_argument("--always_save_model", action='store_true')
     parser.add_argument("--do_eval_bleu", action='store_true', help="Whether to evaluate bleu on dev set.")
 
-    ## Required parameters
+    # LoRA-related arguments
+    parser.add_argument("--use_lora", action="store_true", help="Enable LoRA fine-tuning")
+    parser.add_argument("--lora_r", default=8, type=int, help="LoRA rank")
+    parser.add_argument("--lora_alpha", default=32, type=int, help="LoRA alpha scaling")
+    parser.add_argument("--lora_dropout", default=0.1, type=float, help="Dropout used in LoRA layers")
+
+    # Required parameters
     parser.add_argument("--model_name_or_path", default="roberta-base", type=str,
                         help="Path to pre-trained model: e.g. roberta-base")
     parser.add_argument("--output_dir", default=None, type=str, required=True,
                         help="The output directory where the model predictions and checkpoints will be written.")
     parser.add_argument("--load_model_path", default=None, type=str,
                         help="Path to trained model: Should contain the .bin files")
-    ## Other parameters
+
+    # Other parameters
     parser.add_argument("--train_filename", default=None, type=str,
                         help="The train filename. Should contain the .jsonl files for this task.")
     parser.add_argument("--dev_filename", default=None, type=str,
@@ -83,23 +89,22 @@ def add_args(parser):
     parser.add_argument("--max_grad_norm", default=1.0, type=float,
                         help="Max gradient norm.")
 
-    parser.add_argument("--save_steps", default=-1, type=int, )
-    parser.add_argument("--log_steps", default=-1, type=int, )
+    parser.add_argument("--save_steps", default=-1, type=int)
+    parser.add_argument("--log_steps", default=-1, type=int)
     parser.add_argument("--max_steps", default=-1, type=int,
                         help="If > 0: set total number of training steps to perform. Override num_train_epochs.")
-    parser.add_argument("--eval_steps", default=-1, type=int,
-                        help="")
-    parser.add_argument("--train_steps", default=-1, type=int,
-                        help="")
+    parser.add_argument("--eval_steps", default=-1, type=int)
+    parser.add_argument("--train_steps", default=-1, type=int)
     parser.add_argument("--warmup_steps", default=100, type=int,
                         help="Linear warmup over warmup_steps.")
     parser.add_argument("--local_rank", type=int, default=-1,
                         help="For distributed training: local_rank")
     parser.add_argument('--seed', type=int, default=1234,
                         help="random seed for initialization")
+
     args = parser.parse_args()
 
-    if args.task in ['summarize']:
+    if args.task == 'summarize':
         args.lang = args.sub_task
     elif args.task in ['refine', 'concode', 'clone']:
         args.lang = 'java'
@@ -107,16 +112,17 @@ def add_args(parser):
         args.lang = 'c'
     elif args.task == 'translate':
         args.lang = 'c_sharp' if args.sub_task == 'java-cs' else 'java'
+
+    if args.use_lora:
+        logger.info("LoRA enabled: r=%d, alpha=%d, dropout=%.2f", args.lora_r, args.lora_alpha, args.lora_dropout)
+
     return args
 
-
 def set_dist(args):
-    # Setup CUDA, GPU & distributed training
     if args.local_rank == -1 or args.no_cuda:
         device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
         args.n_gpu = torch.cuda.device_count()
     else:
-        # Setup for distributed data parallel
         torch.cuda.set_device(args.local_rank)
         device = torch.device("cuda", args.local_rank)
         torch.distributed.init_process_group(backend='nccl')
@@ -127,9 +133,7 @@ def set_dist(args):
     args.device = device
     args.cpu_cont = cpu_cont
 
-
 def set_seed(args):
-    """set random seed."""
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
