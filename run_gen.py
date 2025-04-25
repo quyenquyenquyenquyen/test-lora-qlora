@@ -34,7 +34,8 @@ from torch.nn import functional as F
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader, SequentialSampler, RandomSampler
 from torch.utils.data.distributed import DistributedSampler
-from transformers import AdamW, get_linear_schedule_with_warmup
+from torch.optim import AdamW
+from transformers.optimization import get_linear_schedule_with_warmup
 from models import build_or_load_gen_model
 from evaluator import smooth_bleu
 from evaluator.CodeBLEU import calc_code_bleu
